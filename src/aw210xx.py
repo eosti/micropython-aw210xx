@@ -1,4 +1,5 @@
 from machine import I2C
+
 TYPE_CHECKING = False
 if TYPE_CHECKING:
     from enum import IntEnum
@@ -8,10 +9,14 @@ else:
     Optional = object
 
 
+__version__ = "1.0.0"
+
+
 class AW210xxRegisters(IntEnum):
     """
     Enum for all registers on a AW210xx. Any _BASE registers represent the
-    0th register with that name, the number of additional registers is dependent on model
+    0th register with that name, the number of additional registers
+    is dependent on model
     """
 
     GCR = 0x00
@@ -166,15 +171,15 @@ class AW210xxBase:
         self.model = model
 
         if model == "AW21009":
-            self.MAX_CHANNEL = 8
+            self.NUM_CHANNELS = 9
         elif model == "AW21012":
-            self.MAX_CHANNEL = 11
+            self.NUM_CHANNELS = 12
         elif model == "AW21018":
-            self.MAX_CHANNEL = 17
+            self.NUM_CHANNELS = 18
         elif model == "AW21024":
-            self.MAX_CHANNEL = 23
+            self.NUM_CHANNELS = 24
         elif model == "AW21036":
-            self.MAX_CHANNEL = 35
+            self.NUM_CHANNELS = 36
         else:
             raise ValueError("Unknown AW210xx model")
 
@@ -182,14 +187,14 @@ class AW210xxBase:
         return int(self.i2c.readfrom_mem(self.addr, register, 1)[0])
 
     def _write_register(self, register: int, val: int) -> None:
-        self.i2c.writeto_mem(self.addr, register, val)
+        self.i2c.writeto_mem(self.addr, register, bytearray([val]))
 
     def _read_bits(self, register: int, pos: int, numbits: int) -> int:
         """Read from certain bits in a register"""
         if pos + numbits > 8:
             raise ValueError("Cannot read more than 8 bits from a byte")
         mask = (2**numbits) - 1 << pos
-        reg = self.i2c.readfrom_mem(self.addr, register, 1)
+        reg = int(self.i2c.readfrom_mem(self.addr, register, 1)[0])
         return (reg & mask) >> pos
 
     def _write_bits(self, register: int, pos: int, numbits: int, state: int) -> None:
@@ -197,9 +202,9 @@ class AW210xxBase:
         if pos + numbits > 8:
             raise ValueError("Cannot write more than 8 bits to a byte")
         mask = (2**numbits) - 1 << pos
-        reg = self.i2c.readfrom_mem(self.addr, register, 1)
-        retval = (reg[0] & ~mask) | ((state << pos) & mask)
-        self.i2c.writeto_mem(self.addr, register, retval)
+        reg = int(self.i2c.readfrom_mem(self.addr, register, 1)[0])
+        retval = (reg & ~mask) | ((state << pos) & mask)
+        self.i2c.writeto_mem(self.addr, register, bytearray([retval]))
 
 
 class AW210xxBasic(AW210xxBase):
@@ -217,23 +222,22 @@ class AW210xxBasic(AW210xxBase):
         """Reset registers to default state"""
         self._write_register(AW210xxRegisters.RESET, 0x00)
 
-    def chip_enable(self, state: Optional[bool] = None) -> bool:
+    def chip_enabled(self, enabled: Optional[bool] = None) -> bool:
         """Set or get chip enable state"""
-        if state is None:
+        if enabled is None:
             return bool(self._read_bits(AW210xxRegisters.GCR, 0, 1))
-        self._write_bits(AW210xxRegisters.GCR, 0, 1, state)
-        return state
-
-    def update(self):
-        """Update output to match current state of BR registers"""
-        self._write_register(AW210xxRegisters.UPDATE, 0x00)
+        self._write_bits(AW210xxRegisters.GCR, 0, 1, enabled)
+        return enabled
 
 
 class AW210xxLED(AW210xxBase):
     """Collection of functions changing the control of LEDs"""
 
     def rgb_mode(self, state: Optional[bool] = None) -> bool:
-        """Set or get the state of RGB mode (every 3 channels share common brightness)"""
+        """
+        Set or get the state of RGB mode
+        (every 3 channels share common brightness)
+        """
         if state is None:
             return bool(self._read_bits(AW210xxRegisters.GCR2, 0, 1))
         self._write_bits(AW210xxRegisters.GCR2, 0, 1, state)
@@ -270,10 +274,10 @@ class AW210xxLED(AW210xxBase):
         self._write_bits(AW210xxRegisters.GCR4, 0, 2, rate)
         return rate
 
-    def br(self, channel: int, val: Optional[int]) -> int:
+    def br(self, channel: int, val: Optional[int] = None) -> int:
         """Set or get the PWM brightness for a certain channel"""
-        if channel < 0 or channel > self.MAX_CHANNEL:
-            raise ValueError(f"Channel number must be between 0 and {self.MAX_CHANNEL}")
+        if channel < 0 or channel > self.NUM_CHANNELS - 1:
+            raise ValueError(f"Channel number must be between 0 and {self.NUM_CHANNELS - 1}")
 
         if val is None:
             return self._read_register(AW210xxRegisters.BR_BASE + channel)
@@ -286,12 +290,16 @@ class AW210xxLED(AW210xxBase):
         self._write_register(AW210xxRegisters.BR_BASE + channel, val)
         return val
 
+    def update(self):
+        """Update output to match current state of BR registers"""
+        self._write_register(AW210xxRegisters.UPDATE, 0x00)
+
 
 class AW210xxOpenShortChecking(AW210xxBase):
     """Collection of functions related to the open/short circuit detection"""
 
     def open_threshold(
-        self, thresh: Optional[AW210xxOpenThreshold]
+        self, thresh: Optional[AW210xxOpenThreshold] = None
     ) -> AW210xxOpenThreshold:
         """Set or get the open circuit threshold"""
         if thresh is None:
@@ -300,7 +308,7 @@ class AW210xxOpenShortChecking(AW210xxBase):
         return thresh
 
     def short_threshold(
-        self, thresh: Optional[AW210xxShortThreshold]
+        self, thresh: Optional[AW210xxShortThreshold] = None
     ) -> AW210xxShortThreshold:
         """Set or get the short circuit threshold"""
         if thresh is None:
@@ -309,7 +317,7 @@ class AW210xxOpenShortChecking(AW210xxBase):
         return thresh
 
     def open_short_detect(
-        self, thresh: Optional[AW210xxOpenShortDetect]
+        self, thresh: Optional[AW210xxOpenShortDetect] = None
     ) -> AW210xxOpenShortDetect:
         """Set or get the short/open detect state"""
         if thresh is None:
@@ -319,7 +327,6 @@ class AW210xxOpenShortChecking(AW210xxBase):
 
     def get_open_short_status(self) -> int:
         """Reads open/short status register and returns concatenated bitfield"""
-        # TODO: do smaller chips just return zero for these fields?
         state = 0
         for i in range(5):
             state = state | self._read_register(AW210xxRegisters.OSST_BASE + i) << (
@@ -359,12 +366,12 @@ class AW210xxPWM(AW210xxBase):
         # TODO: is writing to all the fields ok on smaller chips?
         self._write_bits(AW210xxRegisters.PHCR, 1, 6, state_val)
 
-    def spread_spectrum_enable(self, state: Optional[bool] = None) -> bool:
+    def spread_spectrum_enabled(self, enabled: Optional[bool] = None) -> bool:
         """Sets or gets if spread spectrum is enabled"""
-        if state is None:
+        if enabled is None:
             return bool(self._read_bits(AW210xxRegisters.SSCR, 4, 1))
-        self._write_bits(AW210xxRegisters.SSCR, 4, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.SSCR, 4, 1, enabled)
+        return enabled
 
     def spread_spectrum_range(
         self, state: Optional[AW210xxSpreadSpectrumRange] = None
@@ -420,10 +427,10 @@ class AW210xxPower(AW210xxBase):
         self._write_register(AW210xxRegisters.GCCR, val)
         return val
 
-    def col(self, channel: int, val: Optional[int]) -> int:
+    def col(self, channel: int, val: Optional[int] = None) -> int:
         """Set or get the constant current parameter for a certain channel"""
-        if channel < 0 or channel > self.MAX_CHANNEL:
-            raise ValueError(f"Channel number must be between 0 and {self.MAX_CHANNEL}")
+        if channel < 0 or channel > self.NUM_CHANNELS - 1:
+            raise ValueError(f"Channel number must be between 0 and {self.NUM_CHANNELS - 1}")
 
         if val is None:
             return self._read_register(AW210xxRegisters.COL_BASE + channel)
@@ -457,33 +464,48 @@ class AW210xxPower(AW210xxBase):
         self._write_bits(AW210xxRegisters.UVCR, 3, 1, state)
         return state
 
-    def ocp_enable(self, state: Optional[bool] = None) -> bool:
+    def ocp_enabled(self, enabled: Optional[bool] = None) -> bool:
         """Set or get the overcurrent protection state"""
-        if state is None:
+        if enabled is None:
             return bool(self._read_bits(AW210xxRegisters.UVCR, 2, 1))
-        self._write_bits(AW210xxRegisters.UVCR, 2, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.UVCR, 2, 1, enabled)
+        return enabled
 
-    def uvlo_disable_protection(self, state: Optional[bool] = None) -> bool:
+    def uvlo_protection_disabled(self, disabled: Optional[bool] = None) -> bool:
         """
         Set or get if the UVLO protection (i.e. action) is disabled
         When tripped, the UVLO protection disables the chip.
         To function, the UVLO detection must also be enabled.
         """
-        if state is None:
+        if disabled is None:
             return bool(self._read_bits(AW210xxRegisters.UVCR, 1, 1))
-        self._write_bits(AW210xxRegisters.UVCR, 1, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.UVCR, 1, 1, disabled)
+        return disabled
 
-    def uvlo_disable_detection(self, state: Optional[bool] = None) -> bool:
+    def uvlo_detection_disabled(self, disabled: Optional[bool] = None) -> bool:
         """
         Set or get if the UVLO detection is disabled
         When tripped, the UVLO detection will set undervoltage bit, see `uvlo_detected()`
         """
-        if state is None:
+        if disabled is None:
             return bool(self._read_bits(AW210xxRegisters.UVCR, 0, 1))
-        self._write_bits(AW210xxRegisters.UVCR, 0, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.UVCR, 0, 1, disabled)
+        return disabled
+
+    def max_current(self) -> float:
+        """
+        Returns max possible current per channel.
+        Assumes that white correction is at max, global current control is at max,
+        and BR and COL for the channel is at max.
+        """
+        return 200 * 0.4 / self.r_ext
+
+    def max_global_current(self) -> float:
+        """
+        Taking into account the global current control,
+        returns max current per channel.
+        """
+        return self.max_current() * self.global_current() / 255
 
 
 class AW210xxThermalProtection(AW210xxBase):
@@ -493,35 +515,35 @@ class AW210xxThermalProtection(AW210xxBase):
         """Reads if there is an overtemperature event"""
         return bool(self._read_bits(AW210xxRegisters.OTCR, 4, 1))
 
-    def ot_disable_protection(self, state: Optional[bool] = None) -> bool:
+    def ot_protection_disabled(self, disabled: Optional[bool] = None) -> bool:
         """
         Set or get if the overtemperature protection (i.e. action) is disabled
         When tripped, the OT protection disables the chip.
         The setpoint of overtemperature is 150C.
         To function, the OT detection must also be enabled.
         """
-        if state is None:
+        if disabled is None:
             return bool(self._read_bits(AW210xxRegisters.OTCR, 3, 1))
-        self._write_bits(AW210xxRegisters.OTCR, 3, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.OTCR, 3, 1, disabled)
+        return disabled
 
-    def ot_disable_detection(self, state: Optional[bool] = None) -> bool:
+    def ot_detection_disabled(self, disabled: Optional[bool] = None) -> bool:
         """
         Set or get if the overtemperature protection (i.e. action) is disabled
         When tripped, the OT detection will set OT bit, see `ot_detected()`
         The setpoint of overtemperature is 150C.
         """
-        if state is None:
+        if disabled is None:
             return bool(self._read_bits(AW210xxRegisters.OTCR, 2, 1))
-        self._write_bits(AW210xxRegisters.OTCR, 2, 1, state)
-        return state
+        self._write_bits(AW210xxRegisters.OTCR, 2, 1, disabled)
+        return disabled
 
     def thermal_rolloff(self) -> bool:
         """Reads if there is thermal roll-off occurring"""
         return bool(self._read_bits(AW210xxRegisters.OTCR, 5, 1))
 
     def thermal_rolloff_threshold(
-        self, temp: Optional[AW210xxThermalThreshold]
+        self, temp: Optional[AW210xxThermalThreshold] = None
     ) -> AW210xxThermalThreshold:
         """Set or get the thermal threshold for current rolloff"""
         if temp is None:
@@ -530,7 +552,7 @@ class AW210xxThermalProtection(AW210xxBase):
         return temp
 
     def thermal_rolloff_percent(
-        self, temp: Optional[AW210xxThermalRollOffPercentage]
+        self, temp: Optional[AW210xxThermalRollOffPercentage] = None
     ) -> AW210xxThermalRollOffPercentage:
         """Set or get the percentage of Iout to roll-off once the threshold is exceeded"""
         if temp is None:
@@ -566,4 +588,25 @@ class AW210xx(
 ):
     """Top-level class of AW210xx with all functionality"""
 
-    pass
+    def max_channel_current(self, channel: int) -> float:
+        """
+        Taking into account all factors, returns average output current that
+        a given channel can pull right now
+        """
+        wb = self.white_scaling()
+        if channel % 3 == 0:
+            white_scalar = wb[0]
+        elif channel % 3 == 1:
+            white_scalar = wb[1]
+        else:
+            white_scalar = wb[2]
+
+        return (
+            self.max_global_current()
+            * white_scalar
+            / 255
+            * self.col(channel)
+            / 255
+            * self.br(channel)
+            / 255
+        )
