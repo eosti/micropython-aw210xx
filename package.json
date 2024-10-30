@@ -1,0 +1,8 @@
+{
+  "urls": [
+    ["micropython-aw210xx/__init__.py", "github:eosti/micropython-aw210xx/src/__init__.py"],
+    ["micropython-aw210xx/aw210xx.py", "github:eosti/micropython-aw210xx/src/aw210xx.py"]
+  ],
+  "deps": [],
+  "version": "1.0.0"
+}
